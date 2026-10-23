@@ -1,7 +1,7 @@
 import { HttpError } from './errors';
 
 interface OpenAIChatResponse {
-  choices?: { message?: { content?: string } }[];
+  choices?: { message?: { content?: string | null }; finish_reason?: string | null }[];
   error?: { message?: string };
 }
 
@@ -40,7 +40,11 @@ async function callGroq(system: string, userPrompt: string): Promise<string> {
     );
   }
 
-  const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const model = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
+  // GPT-OSS uses part of the completion budget for reasoning. Keep that budget
+  // small for this short roast task so it can still return visible text.
+  const isGptOss = model.startsWith('openai/gpt-oss-');
 
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -50,7 +54,8 @@ async function callGroq(system: string, userPrompt: string): Promise<string> {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1000,
+      max_completion_tokens: isGptOss ? 2000 : 1000,
+      ...(isGptOss ? { reasoning_effort: 'low', include_reasoning: false } : {}),
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: userPrompt },
@@ -71,7 +76,7 @@ async function callGroq(system: string, userPrompt: string): Promise<string> {
   }
 
   const data: OpenAIChatResponse = await res.json();
-  const text = data.choices?.[0]?.message?.content;
+  const text = data.choices?.[0]?.message?.content?.trim();
   if (!text) {
     throw new HttpError('Groq returned an empty response. Try again.', 502);
   }
